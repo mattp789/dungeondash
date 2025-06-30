@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { Smartphone, Monitor, Download, Upload, Plus, Minus, Shield, Heart, Zap, Dice6, Moon, Edit3, Check, X } from 'lucide-react';
 
 // Character interface
@@ -22,13 +22,12 @@ interface Character {
   notes: string;
 }
 
-// Message types for WebRTC communication (unused but kept for future implementation)
-// interface Message {
-//   type: 'character-update' | 'sync-request' | 'sync-response';
-//   characterId?: string;
-//   character?: Character;
-//   characters?: Character[];
-// }
+interface Message {
+  type: 'character-update' | 'sync-request' | 'sync-response' | 'character-add';
+  characterId?: string;
+  character?: Character;
+  characters?: Character[];
+}
 
 const initialCharacter: Character = {
   id: '',
@@ -458,71 +457,124 @@ export default function DNDDashboard() {
   const [newCharacter, setNewCharacter] = useState<Character>({ ...initialCharacter, id: Date.now().toString() });
   const [editingHP, setEditingHP] = useState<string | null>(null);
   const [tempHP, setTempHP] = useState({ current: '', max: '' });
+  const [isConnected, setIsConnected] = useState(false);
   
-  // WebRTC refs (unused but kept for future implementation)
-  // const peerConnection = useRef<RTCPeerConnection | null>(null);
-  // const dataChannel = useRef<RTCDataChannel | null>(null);
+  const peerConnection = useRef<RTCPeerConnection | null>(null);
+  const dataChannel = useRef<RTCDataChannel | null>(null);
 
-  // Initialize WebRTC (unused but kept for future implementation)
-  // const initWebRTC = async () => {
-  //   const configuration = {
-  //     iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-  //   };
-  //   
-  //   peerConnection.current = new RTCPeerConnection(configuration);
-  //   
-  //   peerConnection.current.onicecandidate = (event) => {
-  //     if (event.candidate) {
-  //       console.log('ICE candidate:', event.candidate);
-  //     }
-  //   };
-  //   
-  //   peerConnection.current.ondatachannel = (event) => {
-  //     const channel = event.channel;
-  //     channel.onopen = () => console.log('Connected');
-  //     channel.onmessage = handleMessage;
-  //     dataChannel.current = channel;
-  //   };
-  // };
+  const initWebRTC = async () => {
+    const configuration = {
+      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+    };
+    
+    peerConnection.current = new RTCPeerConnection(configuration);
+    
+    peerConnection.current.onicecandidate = (event) => {
+      if (event.candidate) {
+        console.log('ICE candidate:', event.candidate);
+      }
+    };
+    
+    peerConnection.current.ondatachannel = (event) => {
+      const channel = event.channel;
+      channel.onopen = () => {
+        console.log('Data channel connected');
+        setIsConnected(true);
+      };
+      channel.onclose = () => {
+        console.log('Data channel disconnected');
+        setIsConnected(false);
+      };
+      channel.onmessage = handleMessage;
+      dataChannel.current = channel;
+    };
+    
+    if (isDM) {
+      dataChannel.current = peerConnection.current.createDataChannel('gameData');
+      dataChannel.current.onopen = () => {
+        console.log('Data channel created and opened');
+        setIsConnected(true);
+      };
+      dataChannel.current.onclose = () => {
+        console.log('Data channel closed');
+        setIsConnected(false);
+      };
+      dataChannel.current.onmessage = handleMessage;
+    }
+  };
 
-  // WebRTC message handler (unused but kept for future implementation)
-  // const handleMessage = (event: MessageEvent) => {
-  //   const message: Message = JSON.parse(event.data);
-  //   
-  //   switch (message.type) {
-  //     case 'character-update':
-  //       if (message.character) {
-  //         setCharacters(prev => 
-  //           prev.map(char => 
-  //             char.id === message.character!.id ? message.character! : char
-  //           )
-  //         );
-  //       }
-  //       break;
-  //     case 'sync-request':
-  //       if (isDM && dataChannel.current) {
-  //         dataChannel.current.send(JSON.stringify({
-  //           type: 'sync-response',
-  //           characters
-  //         }));
-  //       }
-  //       break;
-  //     case 'sync-response':
-  //       if (message.characters) {
-  //         setCharacters(message.characters);
-  //       }
-  //       break;
-  //   }
-  // };
+  const handleMessage = (event: MessageEvent) => {
+    try {
+      const message: Message = JSON.parse(event.data);
+      
+      switch (message.type) {
+        case 'character-update':
+          if (message.character) {
+            setCharacters(prev => {
+              const existing = prev.find(char => char.id === message.character!.id);
+              if (existing) {
+                return prev.map(char => 
+                  char.id === message.character!.id ? message.character! : char
+                );
+              }
+              return prev;
+            });
+          }
+          break;
+        case 'character-add':
+          if (message.character) {
+            setCharacters(prev => {
+              const exists = prev.some(char => char.id === message.character!.id);
+              if (!exists) {
+                return [...prev, message.character!];
+              }
+              return prev;
+            });
+          }
+          break;
+        case 'sync-request':
+          if (isDM && dataChannel.current) {
+            dataChannel.current.send(JSON.stringify({
+              type: 'sync-response',
+              characters
+            }));
+          }
+          break;
+        case 'sync-response':
+          if (message.characters) {
+            setCharacters(message.characters);
+          }
+          break;
+      }
+    } catch (error) {
+      console.error('Error handling WebRTC message:', error);
+    }
+  };
 
-  const broadcastCharacterUpdate = (_character: Character) => {
-    // WebRTC broadcasting disabled for now
-    // if (dataChannel.current && dataChannel.current.readyState === 'open') {
-    //   dataChannel.current.send(JSON.stringify({
-    //     type: 'character-update',
-    //     character
-    //   }));
-    // }
+  const broadcastCharacterUpdate = (character: Character) => {
+    if (dataChannel.current && dataChannel.current.readyState === 'open') {
+      dataChannel.current.send(JSON.stringify({
+        type: 'character-update',
+        character
+      }));
+    }
+  };
+  
+  const broadcastCharacterAdd = (character: Character) => {
+    if (dataChannel.current && dataChannel.current.readyState === 'open') {
+      dataChannel.current.send(JSON.stringify({
+        type: 'character-add',
+        character
+      }));
+    }
+  };
+  
+  const requestSync = () => {
+    if (dataChannel.current && dataChannel.current.readyState === 'open') {
+      dataChannel.current.send(JSON.stringify({
+        type: 'sync-request'
+      }));
+    }
   };
 
   const updateCharacter = useCallback((characterId: string, updates: Partial<Character>) => {
@@ -546,7 +598,7 @@ export default function DNDDashboard() {
       setCharacters(prev => [...prev, character]);
       setNewCharacter({ ...initialCharacter, id: Date.now().toString() });
       setShowAddCharacter(false);
-      broadcastCharacterUpdate(character);
+      broadcastCharacterAdd(character);
     }
   };
 
@@ -626,6 +678,22 @@ export default function DNDDashboard() {
       reader.readAsText(file);
     }
   };
+  
+  useEffect(() => {
+    initWebRTC();
+    
+    return () => {
+      if (peerConnection.current) {
+        peerConnection.current.close();
+      }
+    };
+  }, [isDM]);
+  
+  useEffect(() => {
+    if (isConnected && !isDM) {
+      requestSync();
+    }
+  }, [isConnected, isDM]);
 
 
 
@@ -641,6 +709,11 @@ export default function DNDDashboard() {
             </div>
             
             <div className="flex items-center space-x-4">
+              <div className="flex items-center space-x-2">
+                <div className={`w-3 h-3 rounded-full ${isConnected ? 'bg-green-400' : 'bg-red-400'}`}></div>
+                <span className="text-white text-sm">{isConnected ? 'Connected' : 'Offline'}</span>
+              </div>
+              
               <button
                 onClick={() => setIsDM(!isDM)}
                 className={`flex items-center space-x-2 px-4 py-2 rounded-lg transition-colors ${
