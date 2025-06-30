@@ -22,11 +22,10 @@ interface Character {
   notes: string;
 }
 
-interface Message {
-  type: 'character-update' | 'sync-request' | 'sync-response' | 'character-add';
-  characterId?: string;
-  character?: Character;
-  characters?: Character[];
+interface RoomData {
+  characters: Character[];
+  lastUpdated: number;
+  dmDeviceId: string;
 }
 
 const initialCharacter: Character = {
@@ -458,122 +457,99 @@ export default function DNDDashboard() {
   const [editingHP, setEditingHP] = useState<string | null>(null);
   const [tempHP, setTempHP] = useState({ current: '', max: '' });
   const [isConnected, setIsConnected] = useState(false);
+  const [deviceId] = useState(() => `device_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`);
   
-  const peerConnection = useRef<RTCPeerConnection | null>(null);
-  const dataChannel = useRef<RTCDataChannel | null>(null);
+  const syncInterval = useRef<number | null>(null);
 
-  const initWebRTC = async () => {
-    const configuration = {
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-    };
+  const initSync = () => {
+    if (roomCode.trim() === '') return;
     
-    peerConnection.current = new RTCPeerConnection(configuration);
-    
-    peerConnection.current.onicecandidate = (event) => {
-      if (event.candidate) {
-        console.log('ICE candidate:', event.candidate);
-      }
-    };
-    
-    peerConnection.current.ondatachannel = (event) => {
-      const channel = event.channel;
-      channel.onopen = () => {
-        console.log('Data channel connected');
-        setIsConnected(true);
-      };
-      channel.onclose = () => {
-        console.log('Data channel disconnected');
-        setIsConnected(false);
-      };
-      channel.onmessage = handleMessage;
-      dataChannel.current = channel;
-    };
+    console.log(`Initializing sync for room: ${roomCode}`);
     
     if (isDM) {
-      dataChannel.current = peerConnection.current.createDataChannel('gameData');
-      dataChannel.current.onopen = () => {
-        console.log('Data channel created and opened');
-        setIsConnected(true);
-      };
-      dataChannel.current.onclose = () => {
-        console.log('Data channel closed');
-        setIsConnected(false);
-      };
-      dataChannel.current.onmessage = handleMessage;
+      startDMSync();
+    } else {
+      startPlayerSync();
     }
+  };
+  
+  const startDMSync = () => {
+    setIsConnected(true);
+    
+    const saveToRoom = () => {
+      const roomData: RoomData = {
+        characters,
+        lastUpdated: Date.now(),
+        dmDeviceId: deviceId
+      };
+      localStorage.setItem(`dnd_room_${roomCode}`, JSON.stringify(roomData));
+    };
+    
+    saveToRoom();
+    
+    if (syncInterval.current) clearInterval(syncInterval.current);
+    syncInterval.current = window.setInterval(saveToRoom, 1000);
+  };
+  
+  const startPlayerSync = () => {
+    const checkForUpdates = () => {
+      const roomDataStr = localStorage.getItem(`dnd_room_${roomCode}`);
+      if (roomDataStr) {
+        try {
+          const roomData: RoomData = JSON.parse(roomDataStr);
+          if (roomData.dmDeviceId !== deviceId) {
+            setCharacters(roomData.characters);
+            setIsConnected(true);
+          }
+        } catch (error) {
+          console.error('Error parsing room data:', error);
+          setIsConnected(false);
+        }
+      } else {
+        setIsConnected(false);
+      }
+    };
+    
+    checkForUpdates();
+    
+    if (syncInterval.current) clearInterval(syncInterval.current);
+    syncInterval.current = window.setInterval(checkForUpdates, 500);
   };
 
-  const handleMessage = (event: MessageEvent) => {
-    try {
-      const message: Message = JSON.parse(event.data);
-      
-      switch (message.type) {
-        case 'character-update':
-          if (message.character) {
-            setCharacters(prev => {
-              const existing = prev.find(char => char.id === message.character!.id);
-              if (existing) {
-                return prev.map(char => 
-                  char.id === message.character!.id ? message.character! : char
-                );
-              }
-              return prev;
-            });
-          }
-          break;
-        case 'character-add':
-          if (message.character) {
-            setCharacters(prev => {
-              const exists = prev.some(char => char.id === message.character!.id);
-              if (!exists) {
-                return [...prev, message.character!];
-              }
-              return prev;
-            });
-          }
-          break;
-        case 'sync-request':
-          if (isDM && dataChannel.current) {
-            dataChannel.current.send(JSON.stringify({
-              type: 'sync-response',
-              characters
-            }));
-          }
-          break;
-        case 'sync-response':
-          if (message.characters) {
-            setCharacters(message.characters);
-          }
-          break;
-      }
-    } catch (error) {
-      console.error('Error handling WebRTC message:', error);
-    }
-  };
 
   const broadcastCharacterUpdate = (character: Character) => {
-    if (dataChannel.current && dataChannel.current.readyState === 'open') {
-      dataChannel.current.send(JSON.stringify({
-        type: 'character-update',
-        character
-      }));
+    if (isDM && roomCode.trim() !== '') {
+      const roomData: RoomData = {
+        characters: characters.map(c => c.id === character.id ? character : c),
+        lastUpdated: Date.now(),
+        dmDeviceId: deviceId
+      };
+      localStorage.setItem(`dnd_room_${roomCode}`, JSON.stringify(roomData));
     }
   };
   
   const broadcastCharacterAdd = (character: Character) => {
-    if (dataChannel.current && dataChannel.current.readyState === 'open') {
-      dataChannel.current.send(JSON.stringify({
-        type: 'character-add',
-        character
-      }));
+    if (isDM && roomCode.trim() !== '') {
+      const roomData: RoomData = {
+        characters: [...characters, character],
+        lastUpdated: Date.now(),
+        dmDeviceId: deviceId
+      };
+      localStorage.setItem(`dnd_room_${roomCode}`, JSON.stringify(roomData));
     }
   };
   
   const requestSync = () => {
-    if (dataChannel.current && dataChannel.current.readyState === 'open') {
-      dataChannel.current.send(JSON.stringify({
-        type: 'sync-request'
-      }));
+    if (!isDM && roomCode.trim() !== '') {
+      const roomDataStr = localStorage.getItem(`dnd_room_${roomCode}`);
+      if (roomDataStr) {
+        try {
+          const roomData: RoomData = JSON.parse(roomDataStr);
+          setCharacters(roomData.characters);
+        } catch (error) {
+          console.error('Error syncing:', error);
+        }
+      }
     }
   };
 
@@ -680,20 +656,35 @@ export default function DNDDashboard() {
   };
   
   useEffect(() => {
-    initWebRTC();
+    if (roomCode.trim() !== '') {
+      initSync();
+    } else {
+      setIsConnected(false);
+      if (syncInterval.current) {
+        clearInterval(syncInterval.current);
+        syncInterval.current = null;
+      }
+    }
     
     return () => {
-      if (peerConnection.current) {
-        peerConnection.current.close();
+      if (syncInterval.current) {
+        clearInterval(syncInterval.current);
+        syncInterval.current = null;
       }
     };
-  }, [isDM]);
+  }, [roomCode, isDM, characters, deviceId]);
   
   useEffect(() => {
     if (isConnected && !isDM) {
       requestSync();
     }
   }, [isConnected, isDM]);
+  
+  const joinRoom = () => {
+    if (roomCode.trim() !== '') {
+      initSync();
+    }
+  };
 
 
 
@@ -709,9 +700,27 @@ export default function DNDDashboard() {
             </div>
             
             <div className="flex items-center space-x-4">
-              <div className="flex items-center space-x-2">
-                <div className={`w-3 h-3 rounded-full ${isConnected ? 'bg-green-400' : 'bg-red-400'}`}></div>
-                <span className="text-white text-sm">{isConnected ? 'Connected' : 'Offline'}</span>
+              <div className="flex items-center space-x-3">
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="text"
+                    value={roomCode}
+                    onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
+                    placeholder="ROOM CODE"
+                    className="px-3 py-1 rounded bg-white/20 text-white placeholder-white/60 border border-white/30 text-sm w-24"
+                    maxLength={6}
+                  />
+                  <button
+                    onClick={joinRoom}
+                    className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm"
+                  >
+                    Join
+                  </button>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <div className={`w-3 h-3 rounded-full ${isConnected ? 'bg-green-400' : 'bg-red-400'}`}></div>
+                  <span className="text-white text-sm">{isConnected ? 'Synced' : 'Local'}</span>
+                </div>
               </div>
               
               <button
@@ -746,6 +755,15 @@ export default function DNDDashboard() {
               </label>
             </div>
           </div>
+          
+          {roomCode.trim() !== '' && (
+            <div className="mt-4 text-center">
+              <p className="text-white/80 text-sm">
+                Room: <span className="font-mono font-bold">{roomCode}</span>
+                {isDM ? ' (DM - Host)' : ' (Player)'}
+              </p>
+            </div>
+          )}
           
           {characters.length === 0 && (
             <div className="mt-4 text-center">
