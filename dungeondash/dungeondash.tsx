@@ -288,7 +288,7 @@ export default function DNDDashboard() {
         if (isDM) {
           saveRoomData(updated, true); // DM character updates should broadcast
         } else {
-          // For players, broadcast the update via WebRTC
+          // For players, try WebRTC first, then fall back to localStorage
           if (connectionManager.current && connectionManager.current.isConnected()) {
             const success = connectionManager.current.sendData({
               type: 'characters-update',
@@ -296,7 +296,15 @@ export default function DNDDashboard() {
             });
             console.log('Player sent character update via WebRTC:', success ? 'success' : 'failed');
           } else {
-            console.log('Player WebRTC not connected, cannot send update');
+            // Fallback: Write to localStorage if WebRTC is not available
+            console.log('Player WebRTC not connected, writing update to localStorage');
+            const roomData: RoomData = {
+              characters: updated,
+              lastUpdated: Date.now(),
+              dmDeviceId: 'pending' // Mark as pending for DM to acknowledge
+            };
+            localStorage.setItem(`dnd_room_${roomCode}`, JSON.stringify(roomData));
+            console.log('💾 Player saved character update to localStorage');
           }
         }
       }
@@ -316,7 +324,7 @@ export default function DNDDashboard() {
           if (isDM) {
             saveRoomData(updated, true); // DM adding character should broadcast
           } else {
-            // For players, broadcast the update via WebRTC
+            // For players, try WebRTC first, then fall back to localStorage
             console.log('📤 Player preparing to send characters:', updated.length, updated.map((c: Character) => c.name));
             if (connectionManager.current && connectionManager.current.isConnected()) {
               const success = connectionManager.current.sendData({
@@ -325,7 +333,15 @@ export default function DNDDashboard() {
               });
               console.log('📤 Player sent new character via WebRTC:', success ? 'success' : 'failed');
             } else {
-              console.log('❌ Player WebRTC not connected, cannot send new character');
+              // Fallback: Write to localStorage if WebRTC is not available
+              console.log('📤 Player WebRTC not connected, writing to localStorage');
+              const roomData: RoomData = {
+                characters: updated,
+                lastUpdated: Date.now(),
+                dmDeviceId: 'pending' // Mark as pending for DM to acknowledge
+              };
+              localStorage.setItem(`dnd_room_${roomCode}`, JSON.stringify(roomData));
+              console.log('💾 Player saved characters to localStorage');
             }
           }
         }
@@ -370,7 +386,7 @@ export default function DNDDashboard() {
         if (isDM) {
           saveRoomData(updated, true); // DM long rest should broadcast
         } else {
-          // For players, broadcast the update via WebRTC
+          // For players, try WebRTC first, then fall back to localStorage
           if (connectionManager.current && connectionManager.current.isConnected()) {
             const success = connectionManager.current.sendData({
               type: 'characters-update',
@@ -378,7 +394,15 @@ export default function DNDDashboard() {
             });
             console.log('Player sent long rest update via WebRTC:', success ? 'success' : 'failed');
           } else {
-            console.log('Player WebRTC not connected, cannot send long rest update');
+            // Fallback: Write to localStorage if WebRTC is not available
+            console.log('Player WebRTC not connected, writing long rest update to localStorage');
+            const roomData: RoomData = {
+              characters: updated,
+              lastUpdated: Date.now(),
+              dmDeviceId: 'pending' // Mark as pending for DM to acknowledge
+            };
+            localStorage.setItem(`dnd_room_${roomCode}`, JSON.stringify(roomData));
+            console.log('💾 Player saved long rest update to localStorage');
           }
         }
       }
@@ -418,10 +442,33 @@ export default function DNDDashboard() {
     // Clear any existing interval
     if (syncInterval.current) clearInterval(syncInterval.current);
     
-    // Periodic sync to keep room alive - no broadcast needed, just localStorage
-    syncInterval.current = window.setInterval(() => {
-      saveRoomData(characters, false);
-    }, 2000);
+    // Check for player updates and save current state
+    const checkForPlayerUpdates = () => {
+      const roomDataStr = localStorage.getItem(`dnd_room_${roomCode}`);
+      if (roomDataStr) {
+        try {
+          const roomData: RoomData = JSON.parse(roomDataStr);
+          // If dmDeviceId is 'pending', it means a player without WebRTC made changes
+          if (roomData.dmDeviceId === 'pending' && Array.isArray(roomData.characters)) {
+            console.log('📥 DM found pending player updates in localStorage');
+            setCharacters(roomData.characters);
+            // Acknowledge by saving with proper DM device ID
+            saveRoomData(roomData.characters, true); // Broadcast the update
+            return;
+          }
+        } catch (error) {
+          console.error('Error checking for player updates:', error);
+        }
+      }
+      // Normal periodic save - use current characters state
+      setCharacters(current => {
+        saveRoomData(current, false);
+        return current;
+      });
+    };
+    
+    // Periodic sync to keep room alive and check for player updates
+    syncInterval.current = window.setInterval(checkForPlayerUpdates, 2000);
   };
 
   const startPlayerSync = () => {
