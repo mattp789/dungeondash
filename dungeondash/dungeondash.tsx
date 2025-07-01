@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { Smartphone, Monitor, Download, Upload, Plus, Minus, Shield, Heart, Zap, Dice6, Moon, Edit3, Check, X } from 'lucide-react';
+import { Smartphone, Monitor, Download, Upload, Shield, Heart, Zap, Dice6, Moon } from 'lucide-react';
+import { WebRTCConnectionManager, ConnectionEvents } from './src/webrtc/ConnectionManager';
 
 // Character interface
 interface Character {
@@ -51,7 +52,7 @@ const initialCharacter: Character = {
   notes: ''
 };
 
-// StatBlock component
+// StatBlock component (keeping existing implementation)
 const StatBlock = React.memo(({ 
   character, 
   onUpdateCharacter, 
@@ -183,23 +184,11 @@ const StatBlock = React.memo(({
 // CharacterEditor component
 const CharacterEditor = React.memo(({ 
   character, 
-  editingHP, 
-  tempHP, 
   onUpdateCharacter, 
-  onStartEditingHP, 
-  onSaveHP, 
-  onCancelEditingHP, 
-  onSetTempHP, 
   onLongRest 
 }: { 
   character: Character;
-  editingHP: string | null;
-  tempHP: { current: string; max: string };
   onUpdateCharacter: (id: string, updates: Partial<Character>) => void;
-  onStartEditingHP: (id: string, character: Character) => void;
-  onSaveHP: (id: string) => void;
-  onCancelEditingHP: () => void;
-  onSetTempHP: (tempHP: { current: string; max: string }) => void;
   onLongRest: (id: string) => void;
 }) => (
   <div className="bg-white rounded-xl shadow-lg p-6 border-2 border-green-200">
@@ -213,8 +202,7 @@ const CharacterEditor = React.memo(({
         placeholder="Character Name"
       />
     </div>
-
-    <div className="mb-4 grid grid-cols-2 gap-4">
+    <div className="grid grid-cols-2 gap-4 mb-4">
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-1">Class</label>
         <input
@@ -222,7 +210,6 @@ const CharacterEditor = React.memo(({
           value={character.class}
           onChange={(e) => onUpdateCharacter(character.id, { class: e.target.value })}
           className="w-full px-3 py-2 border rounded"
-          placeholder="e.g., Fighter, Wizard, Rogue"
         />
       </div>
       <div>
@@ -230,125 +217,31 @@ const CharacterEditor = React.memo(({
         <input
           type="number"
           value={character.level}
-          onChange={(e) => onUpdateCharacter(character.id, { level: Math.max(1, parseInt(e.target.value) || 1) })}
+          onChange={(e) => onUpdateCharacter(character.id, { level: parseInt(e.target.value) || 1 })}
           className="w-full px-3 py-2 border rounded"
-          min="1"
-          max="20"
         />
       </div>
     </div>
-    
-    <div className="mb-4">
-      <div className="flex items-center justify-between mb-2">
-        <label className="block text-sm font-medium text-gray-700">Health Points</label>
-        {editingHP !== character.id ? (
-          <button
-            onClick={() => onStartEditingHP(character.id, character)}
-            className="flex items-center space-x-1 px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm"
-          >
-            <Edit3 className="w-3 h-3" />
-            <span>Edit HP</span>
-          </button>
-        ) : (
-          <div className="flex space-x-2">
-            <button
-              onClick={() => onSaveHP(character.id)}
-              className="flex items-center space-x-1 px-3 py-1 bg-green-500 text-white rounded hover:bg-green-600 text-sm"
-            >
-              <Check className="w-3 h-3" />
-              <span>Save</span>
-            </button>
-            <button
-              onClick={onCancelEditingHP}
-              className="flex items-center space-x-1 px-3 py-1 bg-gray-500 text-white rounded hover:bg-gray-600 text-sm"
-            >
-              <X className="w-3 h-3" />
-              <span>Cancel</span>
-            </button>
-          </div>
-        )}
+    <div className="grid grid-cols-2 gap-4 mb-4">
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">Current HP</label>
+        <input
+          type="number"
+          value={character.hp.current}
+          onChange={(e) => onUpdateCharacter(character.id, { hp: { ...character.hp, current: parseInt(e.target.value) || 0 } })}
+          className="w-full px-3 py-2 border rounded"
+        />
       </div>
-      
-      {editingHP === character.id ? (
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="block text-xs text-gray-600 mb-1">Current HP</label>
-            <input
-              type="text"
-              inputMode="numeric"
-              pattern="[0-9]*"
-              value={tempHP.current}
-              onChange={(e) => {
-                const value = e.target.value.replace(/[^0-9]/g, '');
-                onSetTempHP({ ...tempHP, current: value });
-              }}
-              className="w-full px-3 py-2 border rounded"
-              placeholder="0"
-            />
-          </div>
-          <div>
-            <label className="block text-xs text-gray-600 mb-1">Max HP</label>
-            <input
-              type="text"
-              inputMode="numeric"
-              pattern="[0-9]*"
-              value={tempHP.max}
-              onChange={(e) => {
-                const value = e.target.value.replace(/[^0-9]/g, '');
-                onSetTempHP({ ...tempHP, max: value });
-              }}
-              className="w-full px-3 py-2 border rounded"
-              placeholder="0"
-            />
-          </div>
-        </div>
-      ) : (
-        <div>
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center space-x-2">
-              <Heart className="w-5 h-5 text-red-500" />
-              <span className="font-semibold">HP:</span>
-              <span className="text-lg">{character.hp.current}/{character.hp.max}</span>
-            </div>
-            <div className="flex items-center space-x-2">
-              <button
-                onClick={() => onUpdateCharacter(character.id, { 
-                  hp: { ...character.hp, current: Math.max(0, character.hp.current - 1) }
-                })}
-                className="p-1 bg-red-500 text-white rounded hover:bg-red-600"
-              >
-                <Minus className="w-3 h-3" />
-              </button>
-              <button
-                onClick={() => onUpdateCharacter(character.id, { 
-                  hp: { ...character.hp, current: Math.min(character.hp.max, character.hp.current + 1) }
-                })}
-                className="p-1 bg-green-500 text-white rounded hover:bg-green-600"
-              >
-                <Plus className="w-3 h-3" />
-              </button>
-            </div>
-          </div>
-          <div className="w-full bg-gray-200 rounded-full h-3">
-            <div 
-              className={`h-3 rounded-full transition-all duration-300 ${
-                character.hp.max === 0 ? 'bg-gray-500' :
-                character.hp.current / character.hp.max > 0.6 ? 'bg-green-500' :
-                character.hp.current / character.hp.max > 0.3 ? 'bg-yellow-500' : 'bg-red-500'
-              }`}
-              style={{ 
-                width: character.hp.max === 0 ? '0%' : 
-                `${Math.max(0, Math.min(100, (character.hp.current / character.hp.max) * 100))}%` 
-              }}
-            ></div>
-          </div>
-          <div className="text-xs text-gray-600 mt-1 text-center">
-            {character.hp.max === 0 ? '0' : Math.round(Math.min(100, (character.hp.current / character.hp.max) * 100))}% Health
-          </div>
-        </div>
-      )}
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">Max HP</label>
+        <input
+          type="number"
+          value={character.hp.max}
+          onChange={(e) => onUpdateCharacter(character.id, { hp: { ...character.hp, max: parseInt(e.target.value) || 0 } })}
+          className="w-full px-3 py-2 border rounded"
+        />
+      </div>
     </div>
-
     <div className="mb-4">
       <label className="block text-sm font-medium text-gray-700 mb-1">Armor Class</label>
       <input
@@ -358,90 +251,13 @@ const CharacterEditor = React.memo(({
         className="w-full px-3 py-2 border rounded"
       />
     </div>
-
-    <div className="mb-4">
-      <h4 className="font-semibold text-gray-700 mb-3">Ability Scores</h4>
-      <div className="grid grid-cols-3 gap-3">
-        {Object.entries(character.stats).map(([stat, value]) => (
-          <div key={stat} className="text-center">
-            <label className="block text-xs font-medium text-gray-600 mb-1 uppercase">{stat}</label>
-            <input
-              type="number"
-              value={value}
-              onChange={(e) => onUpdateCharacter(character.id, {
-                stats: {
-                  ...character.stats,
-                  [stat]: Math.max(1, Math.min(30, parseInt(e.target.value) || 10))
-                }
-              })}
-              className="w-full px-2 py-2 border rounded text-center font-semibold"
-              min="1"
-              max="30"
-            />
-            <div className="text-xs text-gray-500 mt-1">
-              {Math.floor((value - 10) / 2) >= 0 ? '+' : ''}{Math.floor((value - 10) / 2)}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-
-    <div className="mb-4">
-      <h4 className="font-semibold text-gray-700 mb-2">Spell Slots</h4>
-      <div className="grid grid-cols-3 gap-2">
-        {Object.entries(character.spellSlots).map(([level, slots]) => (
-          <div key={level} className="space-y-1">
-            <label className="block text-xs font-medium text-gray-600">{level} Level</label>
-            <div className="flex space-x-1">
-              <input
-                type="number"
-                value={slots.current}
-                onChange={(e) => onUpdateCharacter(character.id, {
-                  spellSlots: {
-                    ...character.spellSlots,
-                    [level]: { ...slots, current: Math.max(0, parseInt(e.target.value) || 0) }
-                  }
-                })}
-                className="w-12 px-1 py-1 border rounded text-xs text-center"
-                min="0"
-                max={slots.max}
-              />
-              <span className="text-xs self-center">/</span>
-              <input
-                type="number"
-                value={slots.max}
-                onChange={(e) => onUpdateCharacter(character.id, {
-                  spellSlots: {
-                    ...character.spellSlots,
-                    [level]: { ...slots, max: Math.max(0, parseInt(e.target.value) || 0) }
-                  }
-                })}
-                className="w-12 px-1 py-1 border rounded text-xs text-center"
-                min="0"
-              />
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-
-    <div className="mb-4">
-      <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
-      <textarea
-        value={character.notes}
-        onChange={(e) => onUpdateCharacter(character.id, { notes: e.target.value })}
-        className="w-full px-3 py-2 border rounded h-20"
-        placeholder="Character notes, conditions, etc."
-      />
-    </div>
-
-    <div className="pt-4 border-t border-gray-200">
+    <div className="mt-4 pt-4 border-t border-gray-200">
       <button
         onClick={() => onLongRest(character.id)}
-        className="w-full flex items-center justify-center space-x-2 px-4 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors font-semibold"
+        className="w-full flex items-center justify-center space-x-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
       >
-        <Moon className="w-5 h-5" />
-        <span>Take Long Rest</span>
+        <Moon className="w-4 h-4" />
+        <span>Long Rest</span>
       </button>
     </div>
   </div>
@@ -454,51 +270,183 @@ export default function DNDDashboard() {
   const [roomCode, setRoomCode] = useState('');
   const [showAddCharacter, setShowAddCharacter] = useState(false);
   const [newCharacter, setNewCharacter] = useState<Character>({ ...initialCharacter, id: Date.now().toString() });
-  const [editingHP, setEditingHP] = useState<string | null>(null);
-  const [tempHP, setTempHP] = useState({ current: '', max: '' });
   const [isConnected, setIsConnected] = useState(false);
   const [deviceId] = useState(() => `device_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`);
   
   const syncInterval = useRef<number | null>(null);
+  const connectionManager = useRef<WebRTCConnectionManager | null>(null);
 
-  const initSync = () => {
-    if (roomCode.trim() === '') return;
-    
-    console.log(`Initializing sync for room: ${roomCode}`);
-    
-    if (isDM) {
-      startDMSync();
-    } else {
-      startPlayerSync();
+  // Business logic functions
+  const updateCharacter = useCallback((characterId: string, updates: Partial<Character>) => {
+    setCharacters(prev => {
+      const updated = prev.map(char => 
+        char.id === characterId ? { ...char, ...updates } : char
+      );
+      
+      // Save to localStorage and broadcast for both DM and players
+      if (roomCode.trim() !== '') {
+        if (isDM) {
+          saveRoomData(updated, true); // DM character updates should broadcast
+        } else {
+          // For players, broadcast the update via WebRTC
+          if (connectionManager.current && connectionManager.current.isConnected()) {
+            const success = connectionManager.current.sendData({
+              type: 'characters-update',
+              characters: updated
+            });
+            console.log('Player sent character update via WebRTC:', success ? 'success' : 'failed');
+          } else {
+            console.log('Player WebRTC not connected, cannot send update');
+          }
+        }
+      }
+      
+      return updated;
+    });
+  }, [isDM, roomCode, deviceId]);
+
+  const addCharacter = () => {
+    if (newCharacter.name && newCharacter.class) {
+      const character = { ...newCharacter, id: Date.now().toString() };
+      setCharacters(prev => {
+        const updated = [...prev, character];
+        
+        // Save to localStorage and broadcast for both DM and players
+        if (roomCode.trim() !== '') {
+          if (isDM) {
+            saveRoomData(updated, true); // DM adding character should broadcast
+          } else {
+            // For players, broadcast the update via WebRTC
+            console.log('📤 Player preparing to send characters:', updated.length, updated.map((c: Character) => c.name));
+            if (connectionManager.current && connectionManager.current.isConnected()) {
+              const success = connectionManager.current.sendData({
+                type: 'characters-update',
+                characters: updated
+              });
+              console.log('📤 Player sent new character via WebRTC:', success ? 'success' : 'failed');
+            } else {
+              console.log('❌ Player WebRTC not connected, cannot send new character');
+            }
+          }
+        }
+        
+        return updated;
+      });
+      
+      // For players, auto-select the newly created character
+      if (!isDM) {
+        setSelectedCharacter(character.id);
+        console.log('Auto-selected newly created character:', character.name);
+      }
+      
+      setNewCharacter({ ...initialCharacter, id: Date.now().toString() });
+      setShowAddCharacter(false);
     }
   };
-  
-  const startDMSync = () => {
-    setIsConnected(true);
-    
-    const saveToRoom = () => {
+
+  const longRest = (characterId: string) => {
+    setCharacters(prev => {
+      const updated = prev.map(char => {
+        if (char.id === characterId) {
+          const restoredSpellSlots = Object.keys(char.spellSlots).reduce((acc, level) => {
+            acc[level] = {
+              ...char.spellSlots[level],
+              current: char.spellSlots[level].max
+            };
+            return acc;
+          }, {} as { [key: string]: { current: number; max: number } });
+
+          return {
+            ...char,
+            hp: { ...char.hp, current: char.hp.max },
+            spellSlots: restoredSpellSlots
+          };
+        }
+        return char;
+      });
+      
+      // Save to localStorage and broadcast for both DM and players
+      if (roomCode.trim() !== '') {
+        if (isDM) {
+          saveRoomData(updated, true); // DM long rest should broadcast
+        } else {
+          // For players, broadcast the update via WebRTC
+          if (connectionManager.current && connectionManager.current.isConnected()) {
+            const success = connectionManager.current.sendData({
+              type: 'characters-update',
+              characters: updated
+            });
+            console.log('Player sent long rest update via WebRTC:', success ? 'success' : 'failed');
+          } else {
+            console.log('Player WebRTC not connected, cannot send long rest update');
+          }
+        }
+      }
+      
+      return updated;
+    });
+  };
+
+  // Connection management
+  const saveRoomData = (updatedCharacters: Character[], shouldBroadcast: boolean = false) => {
+    if (isDM && roomCode.trim() !== '') {
       const roomData: RoomData = {
-        characters,
+        characters: updatedCharacters,
         lastUpdated: Date.now(),
         dmDeviceId: deviceId
       };
       localStorage.setItem(`dnd_room_${roomCode}`, JSON.stringify(roomData));
-    };
-    
-    saveToRoom();
-    
-    if (syncInterval.current) clearInterval(syncInterval.current);
-    syncInterval.current = window.setInterval(saveToRoom, 1000);
+      console.log('💾 DM saved characters to localStorage:', updatedCharacters.length);
+      
+      // Only broadcast via WebRTC when explicitly requested (not for useEffect saves)
+      if (shouldBroadcast && connectionManager.current && connectionManager.current.isConnected()) {
+        const success = connectionManager.current.sendData({
+          type: 'characters-update',
+          characters: updatedCharacters
+        });
+        console.log('📤 DM broadcast via WebRTC:', success ? 'success' : 'failed');
+      }
+    }
   };
-  
+
+  const startDMSync = () => {
+    setIsConnected(true);
+    
+    // Initial save - no broadcast needed, just localStorage
+    saveRoomData(characters, false);
+    
+    // Clear any existing interval
+    if (syncInterval.current) clearInterval(syncInterval.current);
+    
+    // Periodic sync to keep room alive - no broadcast needed, just localStorage
+    syncInterval.current = window.setInterval(() => {
+      saveRoomData(characters, false);
+    }, 2000);
+  };
+
   const startPlayerSync = () => {
     const checkForUpdates = () => {
+      // Skip localStorage sync if WebRTC is connected and working
+      if (connectionManager.current && connectionManager.current.isConnected()) {
+        console.log('WebRTC is connected, skipping localStorage sync');
+        return;
+      }
+      
       const roomDataStr = localStorage.getItem(`dnd_room_${roomCode}`);
       if (roomDataStr) {
         try {
           const roomData: RoomData = JSON.parse(roomDataStr);
-          if (roomData.dmDeviceId !== deviceId) {
-            setCharacters(roomData.characters);
+          if (roomData.dmDeviceId !== deviceId && Array.isArray(roomData.characters)) {
+            // Only update if we have valid character data and WebRTC is not working
+            setCharacters(prev => {
+              // Don't override if we already have characters and WebRTC might be working
+              if (prev.length > 0 && roomData.characters.length === 0) {
+                console.log('Preventing localStorage from clearing characters');
+                return prev;
+              }
+              console.log('Player synced characters from localStorage:', roomData.characters.length);
+              return roomData.characters;
+            });
             setIsConnected(true);
           }
         } catch (error) {
@@ -513,119 +461,155 @@ export default function DNDDashboard() {
     checkForUpdates();
     
     if (syncInterval.current) clearInterval(syncInterval.current);
-    syncInterval.current = window.setInterval(checkForUpdates, 500);
+    syncInterval.current = window.setInterval(checkForUpdates, 300);
   };
 
+  const initSync = () => {
+    if (roomCode.trim() === '') return;
+    
+    console.log(`Initializing sync for room: ${roomCode}`);
+    
+    // Clean up any existing connections
+    cleanupConnection();
+    
+    // Start localStorage sync
+    if (isDM) {
+      startDMSync();
+    } else {
+      startPlayerSync();
+    }
+    
+    // Create WebRTC connection
+    createConnection();
+  };
 
-  const broadcastCharacterUpdate = (character: Character) => {
-    if (isDM && roomCode.trim() !== '') {
-      const roomData: RoomData = {
-        characters: characters.map(c => c.id === character.id ? character : c),
-        lastUpdated: Date.now(),
-        dmDeviceId: deviceId
-      };
-      localStorage.setItem(`dnd_room_${roomCode}`, JSON.stringify(roomData));
-    }
-  };
-  
-  const broadcastCharacterAdd = (character: Character) => {
-    if (isDM && roomCode.trim() !== '') {
-      const roomData: RoomData = {
-        characters: [...characters, character],
-        lastUpdated: Date.now(),
-        dmDeviceId: deviceId
-      };
-      localStorage.setItem(`dnd_room_${roomCode}`, JSON.stringify(roomData));
-    }
-  };
-  
-  const requestSync = () => {
-    if (!isDM && roomCode.trim() !== '') {
-      const roomDataStr = localStorage.getItem(`dnd_room_${roomCode}`);
-      if (roomDataStr) {
-        try {
-          const roomData: RoomData = JSON.parse(roomDataStr);
-          setCharacters(roomData.characters);
-        } catch (error) {
-          console.error('Error syncing:', error);
+  const createConnection = () => {
+    console.log(`Creating WebRTC connection as ${isDM ? 'host' : 'client'}`);
+    
+    try {
+      // Create WebRTC connection events
+      const events: ConnectionEvents = {
+        onConnectionStateChange: (connected: boolean) => {
+          console.log('WebRTC connection state changed:', connected, isDM ? '(DM)' : '(Player)');
+          setIsConnected(connected);
+        },
+        onDataReceived: (data: any) => {
+          console.log('📨 Received data via WebRTC:', data.type, isDM ? '(DM)' : '(Player)');
+          console.log('📋 Data details:', {
+            type: data.type,
+            charactersCount: data.characters?.length || 0,
+            fromDM: data.fromDM || false,
+            characterNames: data.characters?.map((c: Character) => c.name) || []
+          });
+          
+          if (data.type === 'characters-update') {
+            // Validate that we're receiving valid character data
+            if (Array.isArray(data.characters) && data.characters.length >= 0) {
+              setCharacters(currentCharacters => {
+                console.log('🔄 Before update - Current characters:', currentCharacters.length, currentCharacters.map((c: Character) => c.name));
+                console.log('🔄 Incoming characters:', data.characters.length, data.characters.map((c: Character) => c.name));
+                
+                // For players: don't let empty arrays from DM clear local characters
+                if (!isDM && data.fromDM && data.characters.length === 0 && currentCharacters.length > 0) {
+                  console.log('🛡️ Player: Preventing DM empty array from clearing local characters');
+                  return currentCharacters; // Keep existing characters
+                }
+                
+                // If we're the DM, save to localStorage and broadcast back to all players
+                if (isDM && roomCode.trim() !== '') {
+                  const roomData: RoomData = {
+                    characters: data.characters,
+                    lastUpdated: Date.now(),
+                    dmDeviceId: deviceId
+                  };
+                  localStorage.setItem(`dnd_room_${roomCode}`, JSON.stringify(roomData));
+                  console.log('💾 DM saved received characters to localStorage');
+                  
+                  // Broadcast the updated characters back to all players via WebRTC
+                  // Only if this is coming from a player (not from DM broadcasting back)
+                  if (connectionManager.current && connectionManager.current.isConnected() && !data.fromDM) {
+                    const success = connectionManager.current.sendData({
+                      type: 'characters-update',
+                      characters: data.characters,
+                      fromDM: true  // Mark this as coming from DM to prevent loops
+                    });
+                    console.log('📤 DM broadcasted characters back to players:', success ? 'success' : 'failed');
+                  }
+                }
+                
+                // For players: if selectedCharacter is empty and we have characters, auto-select the first one
+                if (!isDM && !selectedCharacter && data.characters.length > 0) {
+                  console.log('🎯 Auto-selecting first character for player:', data.characters[0].name);
+                  setSelectedCharacter(data.characters[0].id);
+                }
+                
+                console.log('✅ Updated characters from WebRTC:', data.characters.length, 'characters');
+                return data.characters;
+              });
+            } else {
+              console.warn('⚠️ Received invalid character data via WebRTC:', data);
+            }
+          }
+        },
+        onError: (error: Error) => {
+          console.error('WebRTC error:', error);
+          // Don't alert - just log the error and continue with localStorage sync
         }
-      }
-    }
-  };
-
-  const updateCharacter = useCallback((characterId: string, updates: Partial<Character>) => {
-    setCharacters(prev => {
-      const updated = prev.map(char => 
-        char.id === characterId ? { ...char, ...updates } : char
+      };
+      
+      // Create connection manager
+      connectionManager.current = new WebRTCConnectionManager(
+        deviceId,
+        roomCode,
+        isDM,
+        events
       );
       
-      const updatedChar = updated.find(char => char.id === characterId);
-      if (updatedChar) {
-        broadcastCharacterUpdate(updatedChar);
-      }
+      // Start connection
+      connectionManager.current.connect();
       
-      return updated;
-    });
-  }, []);
-
-  const addCharacter = () => {
-    if (newCharacter.name && newCharacter.class) {
-      const character = { ...newCharacter, id: Date.now().toString() };
-      setCharacters(prev => [...prev, character]);
-      setNewCharacter({ ...initialCharacter, id: Date.now().toString() });
-      setShowAddCharacter(false);
-      broadcastCharacterAdd(character);
+      console.log('WebRTC connection initiated');
+    } catch (error) {
+      console.error('Error creating WebRTC connection:', error);
+      // Continue with localStorage-only sync
     }
   };
 
-  const startEditingHP = useCallback((characterId: string, character: Character) => {
-    setEditingHP(characterId);
-    setTempHP({ current: character.hp.current.toString(), max: character.hp.max.toString() });
-  }, []);
-
-  const saveHP = useCallback((characterId: string) => {
-    const currentHP = parseInt(tempHP.current) || 0;
-    const maxHP = parseInt(tempHP.max) || 0;
-    updateCharacter(characterId, { hp: { current: currentHP, max: maxHP } });
-    setEditingHP(null);
-  }, [tempHP.current, tempHP.max, updateCharacter]);
-
-  const cancelEditingHP = useCallback(() => {
-    setEditingHP(null);
-  }, []);
-
-  const handleSetTempHP = useCallback((newTempHP: { current: string; max: string }) => {
-    setTempHP(newTempHP);
-  }, []);
-
-  const longRest = (characterId: string) => {
-    setCharacters(prev => {
-      const updated = prev.map(char => {
-        if (char.id === characterId) {
-          const restoredSpellSlots = Object.keys(char.spellSlots).reduce((acc, level) => {
-            acc[level] = {
-              ...char.spellSlots[level],
-              current: char.spellSlots[level].max
-            };
-            return acc;
-          }, {} as { [key: string]: { current: number; max: number } });
-
-          const restoredChar = {
-            ...char,
-            hp: { ...char.hp, current: char.hp.max },
-            spellSlots: restoredSpellSlots
-          };
-          
-          broadcastCharacterUpdate(restoredChar);
-          return restoredChar;
-        }
-        return char;
-      });
-      
-      return updated;
-    });
+  const cleanupConnection = () => {
+    console.log('Cleaning up connections');
+    
+    if (connectionManager.current) {
+      connectionManager.current.disconnect();
+      connectionManager.current = null;
+    }
+    
+    // Clear sync interval
+    if (syncInterval.current) {
+      clearInterval(syncInterval.current);
+      syncInterval.current = null;
+    }
   };
 
+  const joinRoom = () => {
+    if (roomCode.trim() !== '') {
+      console.log('Joining room:', roomCode);
+      initSync();
+    } else {
+      console.log('Please enter a room code');
+    }
+  };
+
+  const leaveRoom = () => {
+    console.log('Leaving room');
+    cleanupConnection();
+    
+    // Only clear room-specific localStorage if explicitly leaving (not on connection errors)
+    // Don't cleanup room data automatically to prevent data loss
+    setIsConnected(false);
+  };
+
+
+  // File operations
   const savePartyData = () => {
     const data = JSON.stringify({ characters, roomCode, isDM });
     const blob = new Blob([data], { type: 'application/json' });
@@ -654,39 +638,42 @@ export default function DNDDashboard() {
       reader.readAsText(file);
     }
   };
-  
-  useEffect(() => {
-    if (roomCode.trim() !== '') {
-      initSync();
-    } else {
-      setIsConnected(false);
-      if (syncInterval.current) {
-        clearInterval(syncInterval.current);
-        syncInterval.current = null;
+
+  const requestSync = () => {
+    if (!isDM && roomCode.trim() !== '') {
+      const roomDataStr = localStorage.getItem(`dnd_room_${roomCode}`);
+      if (roomDataStr) {
+        try {
+          const roomData: RoomData = JSON.parse(roomDataStr);
+          setCharacters(roomData.characters);
+        } catch (error) {
+          console.error('Error syncing:', error);
+        }
       }
-    }
-    
-    return () => {
-      if (syncInterval.current) {
-        clearInterval(syncInterval.current);
-        syncInterval.current = null;
-      }
-    };
-  }, [roomCode, isDM, characters, deviceId]);
-  
-  useEffect(() => {
-    if (isConnected && !isDM) {
-      requestSync();
-    }
-  }, [isConnected, isDM]);
-  
-  const joinRoom = () => {
-    if (roomCode.trim() !== '') {
-      initSync();
     }
   };
 
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      cleanupConnection();
+    };
+  }, []);
 
+  // Sync when connected as player
+  useEffect(() => {
+    if (isConnected && !isDM && roomCode.trim() !== '') {
+      requestSync();
+    }
+  }, [isConnected, isDM, roomCode]);
+
+  // Separate effect for character changes to avoid infinite loops
+  // Save to localStorage only, no WebRTC broadcast to prevent loops
+  useEffect(() => {
+    if (isDM && roomCode.trim() !== '' && characters.length > 0) {
+      saveRoomData(characters, false); // No broadcast, just localStorage save
+    }
+  }, [characters, isDM, roomCode, deviceId]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900 p-4">
@@ -710,16 +697,29 @@ export default function DNDDashboard() {
                     className="px-3 py-1 rounded bg-white/20 text-white placeholder-white/60 border border-white/30 text-sm w-24"
                     maxLength={6}
                   />
-                  <button
-                    onClick={joinRoom}
-                    className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm"
-                  >
-                    Join
-                  </button>
+                  {!isConnected ? (
+                    <button
+                      onClick={joinRoom}
+                      className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm"
+                      disabled={roomCode.trim() === ''}
+                    >
+                      Join
+                    </button>
+                  ) : (
+                    <button
+                      onClick={leaveRoom}
+                      className="px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700 text-sm"
+                    >
+                      Leave
+                    </button>
+                  )}
                 </div>
+                
                 <div className="flex items-center space-x-2">
                   <div className={`w-3 h-3 rounded-full ${isConnected ? 'bg-green-400' : 'bg-red-400'}`}></div>
-                  <span className="text-white text-sm">{isConnected ? 'Synced' : 'Local'}</span>
+                  <span className="text-white text-sm">
+                    {isConnected ? 'Connected' : 'Offline'}
+                  </span>
                 </div>
               </div>
               
@@ -859,13 +859,7 @@ export default function DNDDashboard() {
               <div className="lg:col-span-2 xl:col-span-3">
                 <CharacterEditor 
                   character={characters.find(c => c.id === selectedCharacter)!}
-                  editingHP={editingHP}
-                  tempHP={tempHP}
                   onUpdateCharacter={updateCharacter}
-                  onStartEditingHP={startEditingHP}
-                  onSaveHP={saveHP}
-                  onCancelEditingHP={cancelEditingHP}
-                  onSetTempHP={handleSetTempHP}
                   onLongRest={longRest}
                 />
               </div>
