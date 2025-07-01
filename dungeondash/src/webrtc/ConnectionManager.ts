@@ -37,8 +37,18 @@ export class WebRTCConnectionManager {
     try {
       this.cleanup();
       
-      // Create RTCPeerConnection
-      this.peerConnection = new RTCPeerConnection();
+      // Create RTCPeerConnection optimized for local network connections
+      this.peerConnection = new RTCPeerConnection({
+        // Minimal ICE servers for local network - prefer direct connections
+        iceServers: [
+          // Single STUN server as fallback only
+          { urls: 'stun:stun.l.google.com:19302' }
+        ],
+        // Local network optimized configuration
+        iceCandidatePoolSize: 0, // Don't pre-gather candidates
+        iceTransportPolicy: 'all', // Allow all connection types
+        bundlePolicy: 'balanced'
+      });
       this.setupPeerConnection();
 
       if (this.isHost) {
@@ -82,6 +92,18 @@ export class WebRTCConnectionManager {
     // Handle ICE candidates
     this.peerConnection.onicecandidate = (event) => {
       if (event.candidate) {
+        // For local network debugging, log candidate types
+        const isLocalCandidate = event.candidate.address?.startsWith('192.168.') || 
+                                  event.candidate.address?.startsWith('10.') ||
+                                  event.candidate.address?.startsWith('172.');
+        
+        console.log('📡 ICE candidate gathered:', {
+          type: event.candidate.type,
+          protocol: event.candidate.protocol,
+          isLocal: isLocalCandidate,
+          priority: event.candidate.priority
+        });
+        
         this.storeSignal({
           type: 'ice-candidate',
           candidate: event.candidate,
@@ -89,6 +111,8 @@ export class WebRTCConnectionManager {
           roomCode: this.roomCode,
           timestamp: Date.now()
         });
+      } else {
+        console.log('🏁 ICE candidate gathering complete');
       }
     };
 
@@ -97,6 +121,41 @@ export class WebRTCConnectionManager {
       const state = this.peerConnection?.connectionState;
       console.log('WebRTC connection state:', state);
       this.events.onConnectionStateChange(state === 'connected');
+      
+      if (state === 'failed' || state === 'disconnected') {
+        console.warn('WebRTC connection failed on local network - check WiFi and router settings');
+      }
+    };
+
+    // Handle ICE gathering state for mobile debugging
+    this.peerConnection.onicegatheringstatechange = () => {
+      const state = this.peerConnection?.iceGatheringState;
+      console.log('ICE gathering state:', state);
+    };
+
+    // Handle ICE connection state changes
+    this.peerConnection.oniceconnectionstatechange = () => {
+      const state = this.peerConnection?.iceConnectionState;
+      console.log('ICE connection state:', state);
+      
+      if (state === 'failed') {
+        console.error('ICE connection failed on local network');
+        console.log('🔧 Troubleshooting tips for local network:');
+        console.log('  1. Make sure both devices are on the same WiFi network');
+        console.log('  2. Check browser WebRTC permissions');
+        console.log('  3. Try refreshing both devices');
+        console.log('  4. Ensure no VPN or firewall is blocking local connections');
+        console.log('  5. Check if router has AP isolation enabled (disable it)');
+        this.events.onError(new Error('Local network connection failed. Check WiFi and refresh both devices.'));
+      }
+      
+      if (state === 'connected') {
+        console.log('✅ ICE connection established successfully!');
+      }
+      
+      if (state === 'checking') {
+        console.log('🔍 Checking connectivity (this may take longer on mobile)...');
+      }
     };
 
     // Handle incoming data channels (for clients)
@@ -141,9 +200,12 @@ export class WebRTCConnectionManager {
     const offer = await this.peerConnection.createOffer();
     await this.peerConnection.setLocalDescription(offer);
 
+    // Wait for ICE gathering to complete for better mobile compatibility
+    await this.waitForICEGathering();
+
     this.storeSignal({
       type: 'offer',
-      offer,
+      offer: this.peerConnection.localDescription!,
       from: this.deviceId,
       roomCode: this.roomCode,
       timestamp: Date.now()
@@ -230,10 +292,13 @@ export class WebRTCConnectionManager {
         const answer = await this.peerConnection.createAnswer();
         await this.peerConnection.setLocalDescription(answer);
 
+        // Wait for ICE gathering to complete for better mobile compatibility
+        await this.waitForICEGathering();
+
         // Send answer back to host
         this.storeSignal({
           type: 'answer',
-          answer,
+          answer: this.peerConnection.localDescription!,
           from: this.deviceId,
           to: signalData.from,
           roomCode: this.roomCode,
@@ -245,6 +310,31 @@ export class WebRTCConnectionManager {
     } catch (error) {
       this.events.onError(new Error(`Failed to handle offer: ${error}`));
     }
+  }
+
+  private async waitForICEGathering(): Promise<void> {
+    if (!this.peerConnection) return;
+
+    return new Promise((resolve) => {
+      if (this.peerConnection!.iceGatheringState === 'complete') {
+        resolve();
+        return;
+      }
+
+      // Shorter timeout for local network connections
+      const timeout = setTimeout(() => {
+        console.warn('ICE gathering timeout after 3s (local network) - proceeding anyway');
+        console.log('Current ICE gathering state:', this.peerConnection?.iceGatheringState);
+        resolve();
+      }, 3000); // 3 second timeout for local network
+
+      this.peerConnection!.addEventListener('icegatheringstatechange', () => {
+        if (this.peerConnection!.iceGatheringState === 'complete') {
+          clearTimeout(timeout);
+          resolve();
+        }
+      });
+    });
   }
 
   private checkForICECandidates(): void {
@@ -260,7 +350,14 @@ export class WebRTCConnectionManager {
 
         recentCandidates.forEach(signal => {
           if (signal.candidate && this.peerConnection) {
-            this.peerConnection.addIceCandidate(signal.candidate).catch(console.warn);
+            this.peerConnection.addIceCandidate(signal.candidate)
+              .then(() => {
+                console.log('✅ ICE candidate added successfully');
+              })
+              .catch(error => {
+                console.warn('⚠️ Failed to add ICE candidate (common on mobile):', error.message);
+                // This is common and not necessarily fatal - continue processing
+              });
           }
         });
 

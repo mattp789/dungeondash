@@ -6,6 +6,8 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
+    "server": "node server.js",
+    "dev-with-server": "concurrently \"npm run server\" \"npm run dev\"",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "",
@@ -17,13 +19,15 @@
     "lucide-react": "^0.525.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "ws": "^8.16.0"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.6.0",
     "autoprefixer": "^10.4.21",
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.17",
-    "vite": "^6.3.5"
+    "vite": "^6.3.5",
+    "concurrently": "^8.2.2"
   }
 }
